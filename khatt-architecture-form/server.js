@@ -9,7 +9,7 @@ const EXPORT_TOKEN = process.env.EXPORT_TOKEN || '';
 
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 function normalizePhone(v='') { return String(v).replace(/\D/g, ''); }
 function csvEscape(v='') {
@@ -50,9 +50,12 @@ app.get('/healthz', async (req,res) => {
   catch(e){ res.status(500).json({ok:false}); }
 });
 
-app.post('/api/register', async (req,res) => {
+async function register(req,res) {
   try {
-    const d = req.body || {};
+    let d = req.body || {};
+    if (typeof d === 'string') {
+      try { d = JSON.parse(d); } catch (_) { d = {}; }
+    }
     const required = ['name','whatsapp','university','major','year','level','challenge','interest'];
     for (const k of required) if (!String(d[k] || '').trim()) return res.status(400).json({ok:false,message:'الحقول المطلوبة غير مكتملة.'});
     const phoneNorm = normalizePhone(d.whatsapp);
@@ -68,6 +71,13 @@ app.post('/api/register', async (req,res) => {
     if (e && e.code === '23505') return res.status(409).json({ok:false,message:'يوجد تسجيل سابق بهذا الرقم.'});
     console.error(e); res.status(500).json({ok:false,message:'تعذر حفظ التسجيل الآن.'});
   }
+}
+
+app.post('/api/register', register);
+// The current frontend placeholder resolves to this relative path, so it works without asking the user to edit the file.
+app.post('/PASTE_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE', express.text({type:'*/*', limit:'100kb'}), (req,res,next) => {
+  try { req.body = JSON.parse(req.body || '{}'); } catch (_) { req.body = {}; }
+  register(req,res).catch(next);
 });
 
 // One-time token claim used only to connect the private Google Sheet import.
@@ -77,6 +87,7 @@ app.get('/setup-export-token', async (req,res) => {
     const claimed = await pool.query("SELECT value FROM architecture_form_meta WHERE key='export_token_claimed'");
     if (claimed.rows[0]?.value === 'yes') return res.status(410).json({ok:false,message:'claimed'});
     await pool.query("INSERT INTO architecture_form_meta(key,value) VALUES('export_token_claimed','yes') ON CONFLICT(key) DO UPDATE SET value='yes'");
+    res.setHeader('Cache-Control','no-store');
     res.json({ok:true,token:EXPORT_TOKEN});
   } catch(e) { res.status(500).json({ok:false}); }
 });
@@ -92,6 +103,6 @@ app.get('/export.csv', async (req,res) => {
   res.send('\uFEFF' + csv);
 });
 
-app.get('*', (req,res) => res.sendFile(path.join(__dirname,'public','index.html')));
+app.get('*', (req,res) => res.sendFile(path.join(__dirname,'index.html')));
 
 init().then(() => app.listen(port, () => console.log(`KHATT form listening on ${port}`))).catch(err => { console.error(err); process.exit(1); });
